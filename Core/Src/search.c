@@ -1,4 +1,4 @@
-﻿/*
+/*
  * search.c
  *
  *  Created on: 2026/06/17
@@ -9,6 +9,7 @@
 #include "sensor.h"
 //#include "Core/Inc/search.h"
 #include "drive.h"
+#include "motor.h"
 
 MouseData mouse = { 0 }; //マウス情報を格納する構造体
 
@@ -37,7 +38,9 @@ void GetSectionInfo(void);
 void AdvancePosition(void);
 void ConfirmRoute(void);
 void OutputDebugMap(MazeData* p_maze);
+void OutputDebugStepMap(MazeData* p_maze);
 void OutputDebugRoute(MazeData* p_maze);
+void SetupWallDetourTest(void);
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // 関数名：SearchA
 // 内容：左手法（左壁沿いアルゴリズム）を用いた探索走行を行う
@@ -144,6 +147,17 @@ void SearchB(void) {
 	//幅優先探索を用いた探索アルゴリズムBの実装
 	if (mouse.second) {//二次走行の場合は
 		MazeReadFlsh(&maze);//フラッシュメモリから迷路情報を読み込む
+		// 保存地図を検証してから位置合わせ・発進する。
+		MazeMakeStepMap(&maze, mouse.x, mouse.y, true);
+		if (!maze.map[0][0].visited || maze.map[0][0].north ||
+				!maze.map[maze.goal_x][maze.goal_y].visited ||
+				maze.step_map[0][0] == MAX_ROUTE - 1 ||
+				!maze.map[0][1].visited ||
+				maze.step_map[0][1] == MAX_ROUTE - 1) {
+			printf("SearchB: saved map has no usable start-goal route. Run exploration first.\n");
+			return;
+		}
+		DriveSetPosition();
 	}
 	//====スタート位置壁情報取得====
 	GetSectionInfo(); //スタート位置の壁情報を取得
@@ -155,14 +169,22 @@ void SearchB(void) {
 	AdvancePosition(); //マウスの座標を進行方向に1区画進める
 	GetSectionInfo(); //進んだ先の壁情報を取得
 	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
-	//====経路作成====
-	MazeMakeStepMap(&maze, mouse.x, mouse.y, mouse.second); //歩数マップを作成
-	MazeMakeRoute(&maze, mouse.x, mouse.y, mouse.dir); //歩数マップから経路を作成
-	mouse.r_cnt = 0; //経路カウンタを初期化
 	//====探索走行====
 	while (mouse.x != maze.goal_x || mouse.y != maze.goal_y) {
+		// 現在マスで観測した壁を使い、距離マップと経路を毎回更新する。
+		MazeMakeStepMap(&maze, mouse.x, mouse.y, mouse.second);
+		MazeMakeRoute(&maze, mouse.x, mouse.y, mouse.dir);
+		if (maze.r_cnt == 0) {
+			// ゴールへ向かう経路が見つからない場合は走行を中止する。
+			DriveSetSpeed(0.0f);
+			DriveSetAccel(0.0f);
+			MotorStop();
+			printf("SearchB: route not found at (%d, %d)\n", mouse.x, mouse.y);
+			return;
+		}
+
 		//----進行----
-		switch (maze.route[mouse.r_cnt]) {
+		switch (maze.route[0]) {
 			//----前進----
 		case KForward:
 			DriveOneSection(); //半区画前進関数
@@ -213,11 +235,9 @@ void SearchB(void) {
 		default:
 			break;
 		}
-		mouse.r_cnt++; //経路カウンタをインクリメント
 		AdvancePosition(); //マウスの座標を進行方向に1区画進める
 		GetSectionInfo(); //進んだ先の壁情報を取得
 		MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
-		ConfirmRoute(); //進行方向に壁がある場合は、経路を修正する
 	}
 	////====ゴール到達====
 	//ゴール到達時の処理
@@ -231,17 +251,171 @@ void SearchB(void) {
 	}
 }
 
+// Mode 4 uses a fixed saved-map route: no flash writes or map rebuilding
+// between motions. Every action starts/ends at a cell entrance/exit.
+void SearchSlalom(void) {
+    MazeReadFlsh(&maze);
+    if (maze.goal_x >= MAZE_SIZE || maze.goal_y >= MAZE_SIZE) {
+        printf("Slalom: invalid saved goal\n");
+        return;
+    }
+    MazeMakeStepMap(&maze, 0, 0, true);
+    if (!maze.map[0][0].visited || maze.map[0][0].north ||
+            !maze.map[maze.goal_x][maze.goal_y].visited ||
+            !maze.map[0][1].visited || maze.step_map[0][0] == MAX_ROUTE - 1 ||
+            maze.step_map[0][1] == MAX_ROUTE - 1) {
+        printf("Slalom: no saved route; run exploration first\n");
+        return;
+    }
+    MazeMakeRoute(&maze, 0, 1, KNorth);
+    if (maze.r_cnt != maze.step_map[0][1]) {
+        printf("Slalom: incomplete saved route\n");
+        return;
+    }
+    DriveSlalomStop();
+    DriveSetPosition();
+    if (!DriveSlalomStraight(HALF_CELL_MM, SLALOM_SPEED_MM_S, true)) return;
+    AdvancePosition();
+    for (uint16_t i = 0; i < maze.r_cnt; ++i) {
+        bool ok = false;
+        switch (maze.route[i]) {
+        case KForward:
+            ok = DriveSlalomStraight(FULL_CELL_MM, SLALOM_SPEED_MM_S, true);
+            break;
+        case KTurnL90:
+            ok = DriveSlalom90(false);
+            if (ok) mouse.dir = (mouse.dir + 3) % 4;
+            break;
+        case KTurnR90:
+            ok = DriveSlalom90(true);
+            if (ok) mouse.dir = (mouse.dir + 1) % 4;
+            break;
+        case KTurn180:
+            // Retain the calibrated stationary U-turn, at the cell centre.
+            ok = DriveSlalomStraight(HALF_CELL_MM, 0.0f, true);
+            if (ok) {
+                DriveRotateR180();
+                ok = DriveSlalomStraight(HALF_CELL_MM, SLALOM_SPEED_MM_S, true);
+            }
+            if (ok) mouse.dir = (mouse.dir + 2) % 4;
+            break;
+        default:
+            break;
+        }
+        if (!ok) {
+            DriveSlalomStop();
+            printf("Slalom: stopped at route index %u\n", (unsigned)i);
+            return;
+        }
+        AdvancePosition();
+    }
+    if (!DriveSlalomStraight(HALF_CELL_MM, 0.0f, true)) return;
+    DriveRotateR180();
+    mouse.dir = (mouse.dir + 2) % 4;
+    printf("Slalom complete: (%d, %d)\n", mouse.x, mouse.y);
+}
+
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // 関数名：SearchC
-// 内容：探索アルゴリズムCを実行する（拡張用）
+// 内容：ゴール到達後も短縮候補を探索し、最短距離確定後にスタートへ帰還する
 // 引数：なし
 // 戻り値：なし
 //+++++++++++++++++++++++++++++++++++++++++++++++
 void SearchC(void) {
-	//探索アルゴリズムCの実装
-	//ここに探索アルゴリズムCのコードを追加する
+	// モード2専用。SearchInit後、スタートから往路・追加探索・帰還を行う。
+	//====スタート位置壁情報取得====
+	GetSectionInfo(); //スタート位置の壁情報を取得
+	mouse.section.north = false; //スタート位置の北側は壁がない
+	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //スタート位置の壁情報を迷路マップに書き込む
+	//====前に壁が無い想定で問答無用で前進====
+	/*半区画前進関数*/
+	DriveHalfSectionAccel(); //半区画加速走行
+	AdvancePosition(); //マウスの座標を進行方向に1区画進める
+	GetSectionInfo(); //進んだ先の壁情報を取得
+	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+	//====探索走行====
+    bool reached_goal = false;
+    bool certified = false;
+    while (true) {
+        if (mouse.x == maze.goal_x && mouse.y == maze.goal_y) reached_goal = true;
+        uint16_t known, possible;
+        ExploreResult result = MazePlanExplore(&maze, mouse.x, mouse.y,
+                mouse.dir, reached_goal, &known, &possible);
+        if (reached_goal && known != UINT16_MAX && known == possible && !certified) {
+            certified = true;
+            printf("Shortest route certified: %u cells. Returning home.\n", (unsigned)known);
+        }
+        if (result == KExploreDone) break;
+        if (result == KExploreError) {
+            DriveSetSpeed(0.0f);
+            DriveSetAccel(0.0f);
+            MotorStop();
+            printf("SearchC: no route at (%d, %d)\n", mouse.x, mouse.y);
+            return;
+        }
+		//----進行----
+		switch (maze.route[0]) {
+			//----前進----
+		case KForward:
+			DriveOneSection(); //半区画前進関数
+			break;
+			//----左90度回転----
+		case KTurnL90:
+			DriveTurnL90(); //左90度回転関数
+			mouse.dir = (mouse.dir + 3) % 4; //左90度回転
+			break;
+			//----右90度回転----
+		case KTurnR90:
+			DriveTurnR90(); //右90度回転関数
+			mouse.dir = (mouse.dir + 1) % 4; //右90度回転
+			break;
+			//----180度回転----
+		case KTurn180:
+			GetWallSensorInfo(); //センサーの壁情報を取得
+			/*半区画減速走行をここに書く*/
+			DriveHalfSectionBreak();
+			if (sensor.wall_f && sensor.wall_l) {
+				/*右旋回*/
+				DriveRotateR90();
+				/*位置合わせ*/
+				DriveSetPosition();
+				/*右旋回*/
+				DriveRotateR90();
+				/*位置合わせ*/
+				DriveSetPosition();
+			}
+			else if (sensor.wall_f && sensor.wall_r) {
+				/*左旋回*/
+				DriveRotateL90();
+				/*位置合わせ*/
+				DriveSetPosition();
+				/*左旋回*/
+				DriveRotateL90();
+				/*位置合わせ*/
+				DriveSetPosition();
+			}
+			else {
+				DriveRotateR180();
+				/*180度旋回*/
+			}
+			/*半区画加速走行をここに書く*/
+			DriveHalfSectionAccel();
+			mouse.dir = (mouse.dir + 2) % 4; //180度回転
+			break;
+		default:
+			break;
+		}
+		AdvancePosition(); //マウスの座標を進行方向に1区画進める
+		GetSectionInfo(); //進んだ先の壁情報を取得
+		MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+	}
+    // Finish the last half-cell into the start cell, then turn around.
+    DriveHalfSectionBreak();
+    DriveRotateR180();
+    mouse.dir = (mouse.dir + 2) % 4;
+    MazeWriteFlsh(&maze);
+    printf("SearchC complete: shortest route confirmed, returned to start.\n");
 }
-
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // 関数名：GetSectionInfo
 // 内容：壁センサーから相対的な壁情報を取得し、現在のマウスの向きに応じた絶対方角の壁情報に変換・更新する
@@ -387,9 +561,34 @@ void TestSearch(void) {
 				//幅優先探索でルートを作成
 				MazeMakeStepMap(&maze, mouse.x, mouse.y, mouse.second);
 				MazeMakeRoute(&maze, mouse.x, mouse.y, mouse.dir);
+				OutputDebugStepMap(&maze);
+				OutputDebugRoute(&maze);
+				break;
+			case 7:
+				printf("Mode 7 selected: Wall detour test\n");
+				SetupWallDetourTest();
 				break;
 		}
 	}
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++
+// SetupWallDetourTest
+// (0,3) の北に壁を置き、経路が壁を避けることを確認する
+//+++++++++++++++++++++++++++++++++++++++++++++++
+void SetupWallDetourTest(void) {
+	Section wall = { 0 };
+
+	SearchInit();
+	wall.north = true;
+	wall.visited = true;
+	MazeWriteWallMap(&maze, 0, 3, wall);
+
+	OutputDebugMap(&maze);
+	MazeMakeStepMap(&maze, mouse.x, mouse.y, mouse.second);
+	MazeMakeRoute(&maze, mouse.x, mouse.y, mouse.dir);
+	OutputDebugStepMap(&maze);
+	OutputDebugRoute(&maze);
 }
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // OutputDebugMap
@@ -433,6 +632,26 @@ void OutputDebugMap(MazeData* p_maze) {
 		printf("\n");
 	}
 }
+//+++++++++++++++++++++++++++++++++++++++++++++++
+// 関数名：OutputDebugStepMap
+// 内容：歩数マップをコンソールへ出力する
+// 引数：MazeData* p_maze - 迷路データへのポインタ
+// 戻り値：なし
+//+++++++++++++++++++++++++++++++++++++++++++++++
+void OutputDebugStepMap(MazeData* p_maze) {
+	printf("Step Map (goal: %d, %d):\n", p_maze->goal_x, p_maze->goal_y);
+	for (int y = MAZE_SIZE - 1; y >= 0; y--) {
+		for (int x = 0; x < MAZE_SIZE; x++) {
+			if (p_maze->step_map[x][y] == MAX_ROUTE - 1) {
+				printf(" --");
+			} else {
+				printf(" %02d", p_maze->step_map[x][y]);
+			}
+		}
+		printf("\n");
+	}
+}
+
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // 関数名：OutputDebugRoute
 // 内容：現在の迷路経路データをコンソールへ出力する

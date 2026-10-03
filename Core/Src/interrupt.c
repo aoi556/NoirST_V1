@@ -12,23 +12,26 @@
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
 	if (htim->Instance == TIM16) {
-		__HAL_TIM_SET_AUTORELOAD(&htim16, motor.arr_l);
-		__HAL_TIM_SET_COMPARE(&htim16, TIM_CHANNEL_1, (motor.arr_l / 2)); // 50%デューティ比に設定
-		//pulse_lをカウントアップ
-		motor.pulse_l++;
-		//走行距離を計算
-		motor.distance_mm_l = (motor.pulse_l / PULSE_PER_REV) * (WHEEL_DIAMETER_MM * PI);
-	}
-	else if (htim->Instance == TIM17) {
-		__HAL_TIM_SET_AUTORELOAD(&htim17, motor.arr_r);
-		__HAL_TIM_SET_COMPARE(&htim17, TIM_CHANNEL_1, (motor.arr_r / 2)); // 50%デューティ比に設定
+		// TIM16 / PB4 / CLOCK_R: right wheel.
+		__HAL_TIM_SET_AUTORELOAD(&htim16, motor.arr_r);
+		__HAL_TIM_SET_COMPARE(&htim16, TIM_CHANNEL_1, (motor.arr_r / 2)); // 50%デューティ比に設定
 		//pulse_rをカウントアップ
 		motor.pulse_r++;
 		//走行距離を計算
 		motor.distance_mm_r = (motor.pulse_r / PULSE_PER_REV) * (WHEEL_DIAMETER_MM * PI);
 	}
+	else if (htim->Instance == TIM17) {
+		// TIM17 / PB5 / CLOCK_L: left wheel.
+		__HAL_TIM_SET_AUTORELOAD(&htim17, motor.arr_l);
+		__HAL_TIM_SET_COMPARE(&htim17, TIM_CHANNEL_1, (motor.arr_l / 2)); // 50%デューティ比に設定
+		//pulse_lをカウントアップ
+		motor.pulse_l++;
+		//走行距離を計算
+		motor.distance_mm_l = (motor.pulse_l / PULSE_PER_REV) * (WHEEL_DIAMETER_MM * PI);
+	}
 	else if (htim->Instance == TIM6) {
 		//モーター処理
+		DriveSlalomUpdate();
 		MotorUpdate();
 		DriveUpdate();
 		//----センサ処理----

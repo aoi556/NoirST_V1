@@ -26,6 +26,7 @@ void SearchInit(void);
 void SearchA(void);
 
 void SearchB(void);
+void SearchSlalom(void);
 
 void SearchC(void);
 

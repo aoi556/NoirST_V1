@@ -15,5 +15,4 @@
 #include "ui.h"
 #include "sensor.h"
 
-
 #endif /* INC_GLOBAL_H_ */

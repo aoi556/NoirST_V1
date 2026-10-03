@@ -18,7 +18,7 @@
 #define PI 3.14159265358979323846f // 円周率
  //----機体定数----
 #define PULSE_PER_REV      400.0f       // モータ1回転あたりのパルス数
-#define WHEEL_DIAMETER_MM     53.8f        // ホイール直径(mm)
+#define WHEEL_DIAMETER_MM     53.f        // ホイール直径(mm)
  //----走行パルス関連----
 #define PULSE_SEC_HALF 218 // 半区画走行用パルス。2倍すると1区画分に
 #define PULSE_ROT_R90 159     // 右90度回転用パルス数
@@ -42,18 +42,18 @@
     センサ系
 ------------------------------------------------------------*/
 //----壁判断閾値（しきい値）----
-#define WALL_BASE_FR 100 // 前壁右センサ
-#define WALL_BASE_FL 100 // 前壁左センサ
-#define WALL_BASE_R 100  // 右壁センサ
-#define WALL_BASE_L 100  // 左壁センサ
+#define WALL_BASE_FR  170// 前壁右センサ
+#define WALL_BASE_FL  120// 前壁左センサ
+#define WALL_BASE_R   150// 右壁センサ
+#define WALL_BASE_L   350// 左壁センサ
 
 #define BATT_LOW_VOL 3204 * 0.88 // バッテリ電圧低下判定のしきい値
 // 33kΩと10kΩの分圧抵抗を通してバッテリ電圧を取得している→ 11.1*(10/(10+33)/3.3)*4096=3204
 
 //----制御閾値（しきい値）----
-#define CTRL_BASE_L 300 // 左制御閾値
-#define CTRL_BASE_R 300 // 右制御閾値
-#define CTRL_CONT 0.04F  // 比例制御係数
+#define CTRL_BASE_L 1200 // 左制御閾値
+#define CTRL_BASE_R 600 // 右制御閾値
+#define CTRL_CONT 0.1F  // 比例制御係数
 
 //----赤外線（赤色）LED発光待機時間（単位はマイクロ秒）
 #define IR_WAIT_US 15
@@ -62,6 +62,7 @@
     探索系
 ------------------------------------------------------------*/
 #define HALF_CELL_MM (90.f)
+#define TURN_ENTRY_EXTRA_MM 3.5f // 通常の左右90度旋回前に追加で進む距離[mm]
 #define FULL_CELL_MM (180.f)
 #define ROTATE_90_MM (TREAD_MM * PI / 4.f) // 90度回転時の走行距離[mm]
 #define ROTATE_180_MM (TREAD_MM * PI / 2.f) // 180度回転時の走行距離[mm]
@@ -71,8 +72,23 @@
 #define TREAD_MM (82.f) // トレッド幅[mm]（左右の車輪の中心間距離）
 
 #define DEFAULT_ACCEL ((DEFAULT_SPEED * DEFAULT_SPEED - 0*0) / (2.f * HALF_CELL_MM)) // デフォルト加速度[mm/s^2]
-#define DEFAULT_SPEED 200.0f // デフォルト速度[mm/s]
-#define DEFAULT_ROTATE_SPEED 90.0f // デフォルト回転速度[deg/s]
+#define DEFAULT_SPEED 525.0f // デフォルト速度[mm/s]
+#define DEFAULT_ROTATE_SPEED 225.0f // デフォルト回転速度[deg/s]
+
+// モード4専用。スラローム Initial values require on-robot tuning.
+#define SLALOM_SPEED_MM_S 400.0f
+#define SLALOM_MIN_SPEED_MM_S 30.0f // Keep step periods within the 16-bit timer range.
+#define SLALOM_RAMP_MS 100U
+#define SLALOM_HOLD_MS 300U
+// Peak angular speed = 90 / (ramp + hold). Nominal turn displacement:
+
+// 76.55 mm along each axis at 250 mm/s, leaving 13.45 mm at each end.
+#define SLALOM_R_ENTRY_MM 13.45f
+#define SLALOM_R_EXIT_MM 13.45f
+#define SLALOM_L_ENTRY_MM 13.45f
+#define SLALOM_L_EXIT_MM 13.45f
+#define SLALOM_R_ANGLE_GAIN 1.0f
+#define SLALOM_L_ANGLE_GAIN 1.0f
 
 //----ゴール座標----
 #define GOAL_X 7 // 7

@@ -40,6 +40,11 @@ typedef struct {
 
 extern MazeData maze;
 
+// MOVE: route[0] is valid; DONE: certified and back at start; ERROR: no route.
+typedef enum { KExploreMove, KExploreDone, KExploreError } ExploreResult;
+ExploreResult MazePlanExplore(MazeData* p_maze, uint8_t x, uint8_t y,
+        SearchDirection dir, bool reached_goal, uint16_t* known, uint16_t* possible);
+
 /*============================================================
 	関数プロトタイプ宣言
 ============================================================*/

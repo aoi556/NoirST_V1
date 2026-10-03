@@ -42,50 +42,65 @@ void MazeInit(MazeData* p_maze) {
 // 戻り値：なし
 //+++++++++++++++++++++++++++++++++++++++++++++++
 void MazeMakeStepMap(MazeData* p_maze, uint8_t start_x, uint8_t start_y, bool is_second) {
-	//幅優先探索を使用して、迷路の歩数マップを作成する処理
+	// 幅優先探索を使用して、ゴールから各マスへの歩数を作成する。
+	// 一次探索では未知マスも通行候補とし、二次走行では訪問済みマスだけを使う。
+	const uint8_t UNREACHED = MAX_ROUTE - 1;
+	uint8_t queue[MAZE_SIZE * MAZE_SIZE];
+	uint16_t head = 0;
+	uint16_t tail = 0;
+
 	//--全てのセルの歩数を初期化--
 	for (int i = 0; i < MAZE_SIZE; i++) {
 		for (int j = 0; j < MAZE_SIZE; j++) {
-			p_maze->step_map[i][j] = MAX_ROUTE-1; //255は最大値として使用（未訪問を示す）
+			p_maze->step_map[i][j] = UNREACHED;
 		}
 	}
-	//--ゴールセルの歩数を0に設定--
-	uint8_t m_step = 0; //ゴールセルの歩数を0に設定
-	p_maze->step_map[p_maze->goal_x][p_maze->goal_y] = m_step;
-	//--自機座標にたどり着くまでの歩数を計算--
-	while (p_maze->step_map[start_x][start_y] == MAX_ROUTE-1) {
-		for (int i = 0; i < MAZE_SIZE; i++) {
-			for (int j = 0; j < MAZE_SIZE; j++) {
-				if (p_maze->step_map[i][j] == m_step) {
-					//北方向のセルが存在し、壁がない場合
-					if (j < MAZE_SIZE - 1 && !p_maze->map[i][j].north && p_maze->step_map[i][j + 1] == MAX_ROUTE-1) {
-						if (!is_second || p_maze->map[i][j + 1].visited) {
-							p_maze->step_map[i][j + 1] = m_step + 1;
-						}
-					}
-					//東方向のセルが存在し、壁がない場合
 
-					//+++++++++++++++++++++++++++++++++++++++++++++++
-					// TODO: ここに東側の場合の処理を書こう。
-					//+++++++++++++++++++++++++++++++++++++++++++++++
+	// 入力座標またはゴール座標が範囲外なら、未到達のまま終了する。
+	if (start_x >= MAZE_SIZE || start_y >= MAZE_SIZE ||
+			p_maze->goal_x >= MAZE_SIZE || p_maze->goal_y >= MAZE_SIZE) {
+		return;
+	}
 
-					//南方向のセルが存在し、壁がない場合
+	//--ゴールセルの歩数を0に設定し、キューへ入れる--
+	p_maze->step_map[p_maze->goal_x][p_maze->goal_y] = 0;
+	queue[tail++] = p_maze->goal_y * MAZE_SIZE + p_maze->goal_x;
 
-					//+++++++++++++++++++++++++++++++++++++++++++++++
-					// TODO: ここに南側の場合の処理を書こう。
-					//+++++++++++++++++++++++++++++++++++++++++++++++
+	//--ゴールから四方向へ、距離の小さい順に広げる--
+	while (head < tail) {
+		uint8_t cell = queue[head++];
+		uint8_t x = cell % MAZE_SIZE;
+		uint8_t y = cell / MAZE_SIZE;
+		uint8_t next_step = p_maze->step_map[x][y] + 1;
 
-					//西方向のセルが存在し、壁がない場合
-
-					//+++++++++++++++++++++++++++++++++++++++++++++++
-					// TODO: ここに西側の場合の処理を書こう。
-					//+++++++++++++++++++++++++++++++++++++++++++++++
-
-					
-				}
-			}
+		// 北
+		if (y < MAZE_SIZE - 1 && !p_maze->map[x][y].north &&
+				p_maze->step_map[x][y + 1] == UNREACHED &&
+				(!is_second || p_maze->map[x][y + 1].visited)) {
+			p_maze->step_map[x][y + 1] = next_step;
+			queue[tail++] = (y + 1) * MAZE_SIZE + x;
 		}
-		m_step++;
+		// 東
+		if (x < MAZE_SIZE - 1 && !p_maze->map[x][y].east &&
+				p_maze->step_map[x + 1][y] == UNREACHED &&
+				(!is_second || p_maze->map[x + 1][y].visited)) {
+			p_maze->step_map[x + 1][y] = next_step;
+			queue[tail++] = y * MAZE_SIZE + (x + 1);
+		}
+		// 南
+		if (y > 0 && !p_maze->map[x][y].south &&
+				p_maze->step_map[x][y - 1] == UNREACHED &&
+				(!is_second || p_maze->map[x][y - 1].visited)) {
+			p_maze->step_map[x][y - 1] = next_step;
+			queue[tail++] = (y - 1) * MAZE_SIZE + x;
+		}
+		// 西
+		if (x > 0 && !p_maze->map[x][y].west &&
+				p_maze->step_map[x - 1][y] == UNREACHED &&
+				(!is_second || p_maze->map[x - 1][y].visited)) {
+			p_maze->step_map[x - 1][y] = next_step;
+			queue[tail++] = y * MAZE_SIZE + (x - 1);
+		}
 	}
 }
 
@@ -113,23 +128,24 @@ void MazeMakeRoute(MazeData* p_maze, uint8_t start_x, uint8_t start_y, SearchDir
 		uint8_t next_step = current_step - 1;
 		SearchDirection next_dir = dir; // 次に行く方向
 
-		// 周囲4マスの歩数を確認して、進むべき方向（壁がなく、歩数が1少ない方向）を探す
-		if (y < MAZE_SIZE - 1 && !p_maze->map[x][y].north && p_maze->step_map[x][y + 1] == next_step) {
+		// 周囲4マスを北・東・南・西の優先順で調べ、
+		// 壁がなく歩数が1小さい方向を次の進行方向にする。
+		if (y < MAZE_SIZE - 1 && !p_maze->map[x][y].north &&
+				p_maze->step_map[x][y + 1] == next_step) {
 			next_dir = KNorth;
 		}
-
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-		// TODO: ここに東側の場合の処理を書こう。
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-		// TODO: ここに南側の場合の処理を書こう。
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-		// TODO: ここに西側の場合の処理を書こう。
-		//+++++++++++++++++++++++++++++++++++++++++++++++
-
+		else if (x < MAZE_SIZE - 1 && !p_maze->map[x][y].east &&
+				 p_maze->step_map[x + 1][y] == next_step) {
+			next_dir = KEast;
+		}
+		else if (y > 0 && !p_maze->map[x][y].south &&
+				 p_maze->step_map[x][y - 1] == next_step) {
+			next_dir = KSouth;
+		}
+		else if (x > 0 && !p_maze->map[x][y].west &&
+				 p_maze->step_map[x - 1][y] == next_step) {
+			next_dir = KWest;
+		}
 		else {
 			// 経路が見つからない場合(エラー)は終了
 			break;
@@ -138,6 +154,11 @@ void MazeMakeRoute(MazeData* p_maze, uint8_t start_x, uint8_t start_y, SearchDir
 		// 現在の進行方向(dir)と次の方向(next_dir)の相対角度を求める
 		// KNorth(0), KEast(1), KSouth(2), KWest(3)
 		int diff = (next_dir - dir + 4) % 4; //enumはint型なので、diffは0～3の範囲になる
+
+		// r_cnt は uint8_t なので、255を超える書き込みは行わない。
+		if (p_maze->r_cnt == MAX_ROUTE - 1) {
+			break;
+		}
 
 		if (diff == 0) {
 			p_maze->route[p_maze->r_cnt] = KForward;
@@ -326,4 +347,114 @@ void MazeReadFlsh(MazeData* p_maze) {
 			address++;
 		}
 	}
+}
+
+// Certification planner. Static scratch space keeps BFS arrays off the MCU stack.
+// A visited cell has all four sides resolved: three sensors plus the entry edge.
+// Wall observations are mirrored by MazeWriteWallMap, including open edges.
+#define EXPLORE_INF UINT16_MAX
+static uint16_t explore_start[MAZE_SIZE * MAZE_SIZE];
+static uint16_t explore_goal[MAZE_SIZE * MAZE_SIZE];
+static uint16_t explore_current[MAZE_SIZE * MAZE_SIZE];
+static uint16_t explore_queue[MAZE_SIZE * MAZE_SIZE];
+
+static bool ExploreNeighbor(MazeData* m, uint16_t cell, unsigned dir,
+        bool known_only, uint16_t* next) {
+    int x = cell % MAZE_SIZE, y = cell / MAZE_SIZE;
+    int nx = x, ny = y;
+    bool wall;
+    switch (dir) {
+    case KNorth: ny++; wall = m->map[x][y].north; break;
+    case KEast: nx++; wall = m->map[x][y].east; break;
+    case KSouth: ny--; wall = m->map[x][y].south; break;
+    default: nx--; wall = m->map[x][y].west; break;
+    }
+    if (nx < 0 || ny < 0 || nx >= MAZE_SIZE || ny >= MAZE_SIZE || wall)
+        return false;
+    if (known_only && !m->map[x][y].visited && !m->map[nx][ny].visited)
+        return false;
+    *next = ny * MAZE_SIZE + nx;
+    return true;
+}
+
+static void ExploreDistances(MazeData* m, uint16_t origin, bool known_only,
+        uint16_t* distance) {
+    uint16_t head = 0, tail = 0;
+    for (unsigned i = 0; i < MAZE_SIZE * MAZE_SIZE; i++) distance[i] = EXPLORE_INF;
+    distance[origin] = 0;
+    explore_queue[tail++] = origin;
+    while (head < tail) {
+        uint16_t cell = explore_queue[head++];
+        for (unsigned d = 0; d < 4; d++) {
+            uint16_t next;
+            if (ExploreNeighbor(m, cell, d, known_only, &next) &&
+                    distance[next] == EXPLORE_INF) {
+                distance[next] = distance[cell] + 1;
+                explore_queue[tail++] = next;
+            }
+        }
+    }
+}
+
+ExploreResult MazePlanExplore(MazeData* m, uint8_t x, uint8_t y,
+        SearchDirection dir, bool reached_goal, uint16_t* known, uint16_t* possible) {
+    m->r_cnt = 0;
+    *known = *possible = EXPLORE_INF;
+    if (x >= MAZE_SIZE || y >= MAZE_SIZE || m->goal_x >= MAZE_SIZE ||
+            m->goal_y >= MAZE_SIZE || (unsigned)dir >= 4) return KExploreError;
+    uint16_t current = y * MAZE_SIZE + x;
+    uint16_t goal = m->goal_y * MAZE_SIZE + m->goal_x;
+    ExploreDistances(m, goal, true, explore_goal);
+    *known = explore_goal[0];
+    ExploreDistances(m, goal, false, explore_goal);
+    *possible = explore_goal[0];
+    if (*possible == EXPLORE_INF) return KExploreError;
+
+    bool known_only = reached_goal;
+    if (reached_goal) {
+        if (*known == EXPLORE_INF) return KExploreError;
+        uint16_t target = 0;
+        if (*known != *possible) {
+            ExploreDistances(m, 0, false, explore_start);
+            ExploreDistances(m, current, true, explore_current);
+            uint16_t best = EXPLORE_INF;
+            target = EXPLORE_INF;
+            // Only frontier cells that might lie on a shorter start-goal route.
+            // Among them prefer the nearest observable cell; ties favor start.
+            for (uint16_t c = 0; c < MAZE_SIZE * MAZE_SIZE; c++) {
+                if (m->map[c % MAZE_SIZE][c / MAZE_SIZE].visited ||
+                        explore_current[c] == EXPLORE_INF ||
+                        explore_start[c] == EXPLORE_INF || explore_goal[c] == EXPLORE_INF)
+                    continue;
+                if ((uint32_t)explore_start[c] + explore_goal[c] >= *known) continue;
+                if (explore_current[c] < best ||
+                        (explore_current[c] == best && target != EXPLORE_INF &&
+                         explore_start[c] < explore_start[target])) {
+                    target = c;
+                    best = explore_current[c];
+                }
+            }
+            if (target == EXPLORE_INF) return KExploreError;
+        } else if (current == 0) {
+            return KExploreDone;
+        }
+        ExploreDistances(m, target, true, explore_goal);
+    }
+    if (explore_goal[current] == EXPLORE_INF || explore_goal[current] == 0)
+        return KExploreError;
+    // Prefer continuing straight when equal-length choices exist.
+    for (unsigned i = 0; i < 4; i++) {
+        unsigned d = (dir + i) % 4;
+        uint16_t next;
+        if (ExploreNeighbor(m, current, d, known_only, &next) &&
+                explore_goal[next] != EXPLORE_INF &&
+                explore_goal[next] + 1 == explore_goal[current]) {
+            unsigned turn = (d + 4 - dir) % 4;
+            m->route[0] = turn == 0 ? KForward : turn == 1 ? KTurnR90 :
+                    turn == 2 ? KTurn180 : KTurnL90;
+            m->r_cnt = 1;
+            return KExploreMove;
+        }
+    }
+    return KExploreError;
 }

@@ -142,14 +142,32 @@ int main(void)
 	  case 2:
 		  // モード2の処理
 		  printf("Mode 2 selected\n");
+		  MotorInit();
+		  MotorEnable();
+		  SearchInit();
+		  DriveSetPosition();
+		  SearchC();
+		  MotorDisable();
 		  break;
 	  case 3:
-		  // モード3の処理
-		  printf("Mode 3 selected\n");
+		  // 保存済み地図を使った二次走行（スタートからゴールまで）
+		  printf("Mode 3: saved-map run\n");
+		  MotorInit();
+		  MotorEnable();
+		  SearchInit();
+		  mouse.second = true;
+		  SearchB();
+		  MotorDisable();
 		  break;
 	  case 4:
-		  // モード4の処理
-		  printf("Mode 4 selected\n");
+		  // 保存済み地図を使ったスラローム二次走行
+		  printf("Mode 4: saved-map slalom run\n");
+		  MotorInit();
+		  MotorEnable();
+		  SearchInit();
+		  mouse.second = true;
+		  SearchSlalom();
+		  MotorDisable();
 		  break;
 	  case 5:
 		  // モード5の処理
@@ -166,6 +184,7 @@ int main(void)
 		  printf("Mode 7 : Sensor Check\n");
 		  while (1)
 		  {
+			  SetLED();
 			  printf("L: %d, FL: %d, FR: %d, R: %d, Batt: %d\n", (int)sensor.ad_l, (int)sensor.ad_fl, (int)sensor.ad_fr, (int)sensor.ad_r, (int)sensor.ad_batt);
 			  HAL_Delay(100);
 		  }

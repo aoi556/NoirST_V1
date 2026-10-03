@@ -39,6 +39,7 @@ void GetWallSensorInfo(void) {
 	sensor.wall_r = (sensor.ad_r > WALL_BASE_R); //右壁センサーの検知フラグを更新
 	sensor.wall_f = (sensor.ad_fr > WALL_BASE_FR || sensor.ad_fl > WALL_BASE_FL); //前壁センサーの検知フラグを更新
 	sensor.wall_l = (sensor.ad_l > WALL_BASE_L); //左壁センサーの検知フラグを更新
+	SetLED(); // 現在の壁判定をLEDへ表示する
 }
 //+++++++++++++++++++++++++++++++++++++++++++++++
 // SensorUpdate
