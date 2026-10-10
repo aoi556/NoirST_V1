@@ -19,14 +19,13 @@ typedef struct {
     volatile bool wall_following; // 壁追従中かどうかのフラグ
 } DriveData;
 
-#define BASE_L 960// 左センサの中央位置での基準値
-#define BASE_R 550 // 右制御閾値
 
 extern DriveData drive;
 
 void DriveHalfSectionAccel(void);
 void DriveHalfSectionBreak(void);
 void DriveOneSection(void);
+void DriveKnownStraight(unsigned cells, float peak_speed);
 void DriveTurnR90(void);
 void DriveTurnL90(void);
 void DriveTurn180(void);
@@ -36,6 +35,7 @@ void DriveRotateR180(void);
 void DriveRotateL180(void);
 
 void DriveSetPosition(void);
+void DriveSetStartPosition(void); // Align with the rear and left start walls.
 
 void DriveSetSpeed(float speed);
 void DriveSetAccel(float accel);
@@ -47,6 +47,8 @@ void DriveUpdate(void);
 // Continuous mode-4 primitives. Start automatically; end_speed == 0 stops.
 bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall);
 bool DriveSlalom90(bool right);
+bool DriveExploreSlalom90(bool right, float planning_distance_mm);
+float DriveSlalomDistance(void);
 void DriveSlalomStop(void);
 void DriveSlalomUpdate(void); // Called at 1 kHz, before MotorUpdate.
 

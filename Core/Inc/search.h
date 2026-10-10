@@ -23,7 +23,7 @@ extern MouseData mouse;
 
 void SearchInit(void);
 
-void SearchA(void);
+void SearchExploreSlalom(void);
 
 void SearchB(void);
 void SearchSlalom(void);

@@ -66,12 +66,8 @@ void led_write_4(uint8_t led4) {
 }
 
 void SetLED(void){
-	bool wall_Ri=(sensor.ad_r > WALL_BASE_R);
-	bool wall_Fr=(sensor.ad_fr > WALL_BASE_FR || sensor.ad_fl > WALL_BASE_FL);
-	bool wall_Le=(sensor.ad_l > WALL_BASE_L);
-	led_write_1(wall_Ri);
-	led_write_2(wall_Fr);
-	led_write_3(wall_Le);
+	SensorWalls walls = SensorReadWalls();
+	led_write(walls.r, walls.f, walls.l);
 }
 /*------------------------------------------------------------
 	モード選択

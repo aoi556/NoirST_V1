@@ -1,4 +1,4 @@
-﻿/*
+/*
  * drive.c
  *
  *  Created on: Jul 4, 2026
@@ -12,14 +12,38 @@
 
 DriveData drive = { 0 };
 
+// Positive omega turns left. Use independent side references: their measured
+// distances do not necessarily share a robot-centre origin.
+static float WallFollowingOmega(float speed_mm_s) {
+    SensorDistance d[SENSOR_COUNT];
+    SensorReadDistances(d);
+    bool left = d[SENSOR_L].status == SENSOR_DISTANCE_OK &&
+            d[SENSOR_L].mm <= WALL_FOLLOW_MAX_MM;
+    bool right = d[SENSOR_R].status == SENSOR_DISTANCE_OK &&
+            d[SENSOR_R].mm <= WALL_FOLLOW_MAX_MM;
+    float error_mm = 0.0f;
+    if (left) error_mm += d[SENSOR_L].mm - WALL_TARGET_L_MM;
+    if (right) error_mm -= d[SENSOR_R].mm - WALL_TARGET_R_MM;
+    if (left && right) error_mm *= 0.5f;
+    // Continuous deadband avoids a jump at its boundary.
+    if (error_mm > WALL_FOLLOW_DEADBAND_MM) error_mm -= WALL_FOLLOW_DEADBAND_MM;
+    else if (error_mm < -WALL_FOLLOW_DEADBAND_MM) error_mm += WALL_FOLLOW_DEADBAND_MM;
+    else error_mm = 0.0f;
+    // No steering at rest/reverse/very low speed, and never reverse a wheel.
+    float limit = fmaxf(0.0f, speed_mm_s - WALL_FOLLOW_MIN_WHEEL_MM_S) *
+            360.0f / (TREAD_MM * PI);
+    limit = fminf(limit, WALL_FOLLOW_MAX_DEG_S);
+    return fmaxf(-limit, fminf(limit, error_mm * WALL_FOLLOW_KP_DEG_S_PER_MM));
+}
+
 // Only this controller owns the motor commands while mode 4 is moving.
 static volatile struct {
     bool enabled, busy, turning, follow_wall;
-    float origin, distance, start_speed, end_speed, speed, angle_gain;
-    uint32_t turn_tick;
+    float origin, distance, start_speed, end_speed, speed, angle_gain, turn_angle_deg;
+    uint32_t turn_tick, ramp_ms, hold_ms;
 } slalom;
 
-static float SlalomDistance(void) {
+float DriveSlalomDistance(void) {
     return (motor.distance_mm_l + motor.distance_mm_r) * 0.5f;
 }
 
@@ -52,7 +76,8 @@ static bool SlalomWait(uint32_t timeout_ms) {
 
 bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall) {
     if (!isfinite(distance_mm) || distance_mm <= 0.0f ||
-            !isfinite(end_speed) || end_speed < 0.0f || end_speed > SLALOM_SPEED_MM_S ||
+            !isfinite(end_speed) || end_speed < 0.0f ||
+            end_speed > fmaxf(EXPLORE_SLALOM_KNOWN_STRAIGHT_SPEED_MM_S, fmaxf(SECOND_RUN_STRAIGHT_SPEED_MM_S, fmaxf(SLALOM_SPEED_MM_S, fmaxf(EXPLORE_SLALOM_SPEED_MM_S, EXPLORE_KNOWN_STRAIGHT_SPEED_MM_S)))) ||
             (end_speed > 0.0f && end_speed < SLALOM_MIN_SPEED_MM_S)) {
         DriveSlalomStop();
         return false;
@@ -64,7 +89,7 @@ bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall) {
     slalom.start_speed = slalom.speed;
     slalom.end_speed = end_speed;
     slalom.distance = distance_mm;
-    slalom.origin = starting ? 0.0f : SlalomDistance();
+    slalom.origin = starting ? 0.0f : DriveSlalomDistance();
     slalom.turning = false;
     slalom.follow_wall = follow_wall;
     slalom.busy = true;
@@ -81,52 +106,69 @@ bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall) {
     return SlalomWait((uint32_t)(distance_mm / SLALOM_MIN_SPEED_MM_S * 1000.0f) + 2000U);
 }
 
-bool DriveSlalom90(bool right) {
-    float entry = right ? SLALOM_R_ENTRY_MM : SLALOM_L_ENTRY_MM;
-    float exit = right ? SLALOM_R_EXIT_MM : SLALOM_L_EXIT_MM;
-    float gain = right ? SLALOM_R_ANGLE_GAIN : SLALOM_L_ANGLE_GAIN;
-    float peak = 90000.0f / (SLALOM_RAMP_MS + SLALOM_HOLD_MS);
+static bool SlalomTurn(bool right, float entry, float exit, float gain,
+        float speed, float angle_deg, uint32_t ramp_ms, uint32_t hold_ms) {
+    float peak = angle_deg * 1000.0f / (ramp_ms + hold_ms);
     // The pulse distances are unsigned, so this controller requires both
     // wheels to remain forward and above the timer's minimum usable speed.
     if (!slalom.enabled || !isfinite(gain) || gain <= 0.0f ||
-            SLALOM_RAMP_MS == 0U ||
-            SLALOM_SPEED_MM_S - peak * gain * TREAD_MM * PI / 360.0f < SLALOM_MIN_SPEED_MM_S) {
+            ramp_ms == 0U || !isfinite(angle_deg) || angle_deg <= 0.0f ||
+            speed - peak * gain * TREAD_MM * PI / 360.0f < SLALOM_MIN_SPEED_MM_S) {
         DriveSlalomStop();
         return false;
     }
-    if (!DriveSlalomStraight(entry, SLALOM_SPEED_MM_S, false)) return false;
+    if (!DriveSlalomStraight(entry, speed, false)) return false;
     uint32_t irq = __get_PRIMASK();
     __disable_irq();
     slalom.angle_gain = right ? -gain : gain;
+    slalom.turn_angle_deg = angle_deg;
     slalom.turn_tick = 0;
+    slalom.ramp_ms = ramp_ms;
+    slalom.hold_ms = hold_ms;
     slalom.turning = true;
     slalom.follow_wall = false;
     slalom.busy = true;
     __set_PRIMASK(irq);
-    if (!SlalomWait(2U * SLALOM_RAMP_MS + SLALOM_HOLD_MS + 2000U)) return false;
-    return DriveSlalomStraight(exit, SLALOM_SPEED_MM_S, false);
+    if (!SlalomWait(2U * ramp_ms + hold_ms + 2000U)) return false;
+    return DriveSlalomStraight(exit, speed, false);
+}
+
+bool DriveSlalom90(bool right) {
+    return SlalomTurn(right,
+            right ? SLALOM_R_ENTRY_MM : SLALOM_L_ENTRY_MM,
+            right ? SLALOM_R_EXIT_MM : SLALOM_L_EXIT_MM,
+            right ? SLALOM_R_ANGLE_GAIN : SLALOM_L_ANGLE_GAIN,
+            SLALOM_SPEED_MM_S, SLALOM_TURN_ANGLE_DEG, SLALOM_RAMP_MS, SLALOM_HOLD_MS);
+}
+
+bool DriveExploreSlalom90(bool right, float planning_distance_mm) {
+    return SlalomTurn(right,
+            (right ? EXPLORE_SLALOM_R_ENTRY_MM : EXPLORE_SLALOM_L_ENTRY_MM) - planning_distance_mm,
+            right ? EXPLORE_SLALOM_R_EXIT_MM : EXPLORE_SLALOM_L_EXIT_MM,
+            right ? EXPLORE_SLALOM_R_ANGLE_GAIN : EXPLORE_SLALOM_L_ANGLE_GAIN,
+            EXPLORE_SLALOM_SPEED_MM_S, EXPLORE_SLALOM_TURN_ANGLE_DEG, EXPLORE_SLALOM_RAMP_MS, EXPLORE_SLALOM_HOLD_MS);
 }
 
 void DriveSlalomUpdate(void) {
     if (!slalom.enabled) return;
     float omega = 0.0f;
     if (slalom.busy && slalom.turning) {
-        const uint32_t total = 2U * SLALOM_RAMP_MS + SLALOM_HOLD_MS;
+        const uint32_t total = 2U * slalom.ramp_ms + slalom.hold_ms;
         if (slalom.turn_tick >= total) {
             slalom.busy = false;
             slalom.turning = false;
         } else {
-            // Midpoint samples give exactly 90 degrees of commanded area.
+            // Midpoint samples integrate to turn_angle_deg * angle_gain.
             float t = (float)slalom.turn_tick++ + 0.5f;
             float shape = 1.0f;
-            if (t < SLALOM_RAMP_MS) shape = t / SLALOM_RAMP_MS;
-            else if (t > SLALOM_RAMP_MS + SLALOM_HOLD_MS)
-                shape = ((float)total - t) / SLALOM_RAMP_MS;
-            omega = slalom.angle_gain * 90000.0f /
-                    (SLALOM_RAMP_MS + SLALOM_HOLD_MS) * shape;
+            if (t < slalom.ramp_ms) shape = t / slalom.ramp_ms;
+            else if (t > slalom.ramp_ms + slalom.hold_ms)
+                shape = ((float)total - t) / slalom.ramp_ms;
+            omega = slalom.angle_gain * slalom.turn_angle_deg * 1000.0f /
+                    (slalom.ramp_ms + slalom.hold_ms) * shape;
         }
     } else if (slalom.busy) {
-        float fraction = (SlalomDistance() - slalom.origin) / slalom.distance;
+        float fraction = (DriveSlalomDistance() - slalom.origin) / slalom.distance;
         if (fraction >= 1.0f) {
             if (slalom.end_speed == 0.0f) {
                 DriveSlalomStop();
@@ -143,11 +185,7 @@ void DriveSlalomUpdate(void) {
         }
     }
     if (slalom.follow_wall && !slalom.turning) {
-        int16_t left = (int16_t)sensor.ad_l - (int16_t)BASE_L;
-        int16_t right = (int16_t)sensor.ad_r - (int16_t)BASE_R;
-        // Positive omega turns left: steer away from the closer wall.
-        if (CTRL_BASE_L < left) omega -= left * CTRL_CONT;
-        if (CTRL_BASE_R < right) omega += right * CTRL_CONT;
+        omega = WallFollowingOmega(slalom.speed);
         // Limit steering at low launch/braking speeds; never reverse a wheel.
         float limit = (slalom.speed - SLALOM_MIN_SPEED_MM_S) * 360.0f / (TREAD_MM * PI);
         omega = fmaxf(-limit, fminf(limit, omega));
@@ -169,18 +207,7 @@ void DriveUpdate(void) {
     drive.angle_accel_deg_s2 = (motor.acc_mm_s2_r - motor.acc_mm_s2_l) / TREAD_MM * (180.0f / PI);
 
     if (drive.wall_following) {
-        int16_t dif_l = (int16_t)sensor.ad_l - (int16_t)BASE_L;
-        int16_t dif_r = (int16_t)sensor.ad_r - (int16_t)BASE_R;
-        float ctrl = 0.0f;
-        // Positive angular speed turns left with TIM16=right, TIM17=left.
-        if (CTRL_BASE_L < dif_l) {
-            ctrl -= (float)dif_l * CTRL_CONT;
-        }
-        if (CTRL_BASE_R < dif_r) {
-            ctrl += (float)dif_r * CTRL_CONT;
-        }
-        // Clear any previous correction when neither wall needs correction.
-        DriveSetAngleSpeed(ctrl);
+        DriveSetAngleSpeed(WallFollowingOmega(drive.speed_mm_s));
     }
 }
 
@@ -258,6 +285,37 @@ void DriveOneSection(void) {
     MotorStart();
     while((motor.distance_mm_l < FULL_CELL_MM) || (motor.distance_mm_r < FULL_CELL_MM)) {
     }
+    MotorStop();
+}
+
+void DriveKnownStraight(unsigned cells, float peak_speed) {
+    if (cells == 0) return;
+    const float total = FULL_CELL_MM * cells;
+    const float base = DEFAULT_SPEED;
+    const float peak = fmaxf(base, peak_speed);
+    drive.wall_following = true;
+    DriveSetSpeed(base);
+    DriveSetAccel(0.0f);
+    MotorStart();
+    uint32_t last_update = HAL_GetTick() - 1U;
+    while ((motor.distance_mm_l < total) || (motor.distance_mm_r < total)) {
+        uint32_t tick = HAL_GetTick();
+        if (tick == last_update) continue;
+        last_update = tick;
+        float distance = (motor.distance_mm_l + motor.distance_mm_r) * 0.5f;
+        float margin = fminf(distance, total - distance);
+        float shape = fminf(1.0f, fmaxf(0.0f, margin / HALF_CELL_MM));
+        float speed = sqrtf(base * base + (peak * peak - base * base) * shape);
+        float omega = WallFollowingOmega(speed);
+        // Publish speed and steering together. A tight DriveSetSpeed loop
+        // otherwise erases the differential command from the 1 kHz controller.
+        uint32_t irq = __get_PRIMASK();
+        __disable_irq();
+        DriveSetSpeed(speed);
+        DriveSetAngleSpeed(omega);
+        __set_PRIMASK(irq);
+    }
+    DriveSetSpeed(base);
     MotorStop();
 }
 
@@ -373,4 +431,12 @@ void DriveSetPosition(void) {
     DriveSetSpeed(0.f);
     DriveSetAccel(0.f);
     MotorStop();
+}
+
+// Start cell only: face north, with walls to the south and west.
+void DriveSetStartPosition(void) {
+    DriveRotateR90();
+    DriveSetPosition(); // Facing east: the rear of the robot meets the left wall.
+    DriveRotateL90();
+    DriveSetPosition(); // Facing north: finish against the rear (south) wall.
 }

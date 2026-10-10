@@ -1,4 +1,4 @@
-﻿/* USER CODE BEGIN Header */
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -121,12 +121,12 @@ int main(void)
 	  switch (mode) {
 	  case 0:
 		  // モード0の処理
-		  printf("Mode 0 selected\n");
+		  printf("Mode 0: slalom exploration 300 mm/s\n");
       MotorInit();
       MotorEnable();
       SearchInit();
-      DriveSetPosition();
-      SearchA();
+      DriveSetStartPosition();
+      SearchExploreSlalom();
       MotorDisable();
 		  break;
 	  case 1:
@@ -135,7 +135,7 @@ int main(void)
       MotorInit();
       MotorEnable();
       SearchInit();
-      DriveSetPosition();
+      DriveSetStartPosition();
       SearchB();
       MotorDisable();
 		  break;
@@ -145,7 +145,7 @@ int main(void)
 		  MotorInit();
 		  MotorEnable();
 		  SearchInit();
-		  DriveSetPosition();
+		  DriveSetStartPosition();
 		  SearchC();
 		  MotorDisable();
 		  break;
@@ -185,7 +185,7 @@ int main(void)
 		  while (1)
 		  {
 			  SetLED();
-			  printf("L: %d, FL: %d, FR: %d, R: %d, Batt: %d\n", (int)sensor.ad_l, (int)sensor.ad_fl, (int)sensor.ad_fr, (int)sensor.ad_r, (int)sensor.ad_batt);
+			  SensorPrintDistances();
 			  HAL_Delay(100);
 		  }
 		  break;
