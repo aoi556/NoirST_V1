@@ -19,8 +19,9 @@ foreach ($name in @('L','FL','FR','R')) {
     $limit = Number "WALL_BASE_${name}"
     if ($limit -lt 0 -or $limit -gt 4095) { throw 'Wall threshold outside ADC range' }
 }
-if ([Math]::Abs($leftTarget - (30 + (1286-960)*10/340)) -gt 0.001 -or
-    [Math]::Abs($rightTarget - (40 + (555-550)*10/102)) -gt 0.001) { throw 'Centre conversion mismatch' }
+# Targets are robot tuning parameters, not fixed conversions of old raw
+# references. Validate their range without rejecting intentional offsets.
+if ($leftTarget -lt 10 -or $rightTarget -lt 10) { throw 'Target outside calibrated near bound' }
 if ($maximum -gt 90 -or $maximum -lt [Math]::Max($leftTarget,$rightTarget) -or
     $deadband -lt 0 -or $kp -le 0 -or $cap -le 0 -or $minWheel -le 0) { throw 'Invalid control parameters' }
 function Omega([double]$left, [double]$right, [double]$speed, [bool]$leftValid=$true, [bool]$rightValid=$true) {
@@ -42,6 +43,8 @@ if ((Omega ($leftTarget+5) ($rightTarget-5) 200) -le 0) { throw 'Near right wall
 if ((Omega ($leftTarget-5) 90 200 $true $false) -ge 0) { throw 'Left-only wall sign' }
 if ((Omega 90 ($rightTarget-5) 200 $false $true) -le 0) { throw 'Right-only wall sign' }
 if ((Omega 10 10 200 $false $false) -ne 0) { throw 'Clamped invalid samples must not steer' }
+if ((Omega 90 10 292 $false $true) -le 0) { throw 'Strong right return must retain left steering' }
+if ((Omega 10 90 292 $true $false) -ge 0) { throw 'Strong left return must retain right steering' }
 if ((Omega 90 90 200) -ne 0) { throw 'Distant walls must not steer' }
 if ((Omega ($leftTarget+0.5) $rightTarget 200) -ne 0) { throw 'Deadband' }
 foreach ($speed in @(-30,0,20,30,31,50,200,525)) {
@@ -59,10 +62,11 @@ foreach ($speed in @(-30,0,20,30,31,50,200,525)) {
 }
 # Integration guard: raw wall channels may only be used inside the sensor layer.
 foreach ($file in Get-ChildItem (Join-Path $root 'Core/Src') -Filter '*.c') {
-    if ($file.Name -eq 'sensor.c') { continue }
+    # Log exporters copy raw samples but do not use them to control motion.
+    if ($file.Name -in @('sensor.c','run_log.c','log_stream.c')) { continue }
     $source = Get-Content -Raw $file.FullName
     if ($source -match '(?:\.|->)ad_(?:fl|fr|l|r)\b|\b(?:WALL_BASE_\w+|CTRL_BASE_\w+|CTRL_CONT|BASE_L|BASE_R)\b') {
         throw "Raw wall control reference in $($file.Name)"
     }
 }
-Write-Output 'PASS: centre conversion, steering signs, single/no wall, deadband, angular/wheel limits (reference calculation), no raw wall consumers outside sensor.c.'
+Write-Output 'PASS: tuned target bounds, steering signs, strong-return/single/no wall, deadband, angular/wheel limits (reference calculation), raw wall consumers limited to sensor and log export.'

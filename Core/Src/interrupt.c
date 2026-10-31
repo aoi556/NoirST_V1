@@ -9,6 +9,7 @@
 #include "tim.h"
 #include "motor.h"
 #include "drive.h"
+#include "run_log.h"
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
 	if (htim->Instance == TIM16) {
@@ -42,6 +43,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 		SensorUpdate();
 		HAL_GPIO_WritePin(IR_SIDE_GPIO_Port, IR_SIDE_Pin, GPIO_PIN_RESET);
 		HAL_GPIO_WritePin(IR_FRONT_GPIO_Port, IR_FRONT_Pin, GPIO_PIN_RESET);
+		RunLogTick();
 	}
 }
 

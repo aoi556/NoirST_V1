@@ -159,7 +159,8 @@ SECTIONS
   * If initialized variables will be placed in this section,
   * the startup code needs to be modified to copy the init-values.
   */
-  .ccmram :
+  /* Log scratch space is written before use; no flash initialisation image. */
+  .ccmram (NOLOAD) :
   {
     . = ALIGN(4);
     _sccmram = .;       /* create a global symbol at ccmram start */
@@ -168,7 +169,10 @@ SECTIONS
 
     . = ALIGN(4);
     _eccmram = .;       /* create a global symbol at ccmram end */
-  } >CCMRAM AT> FLASH
+  } >CCMRAM
+
+  ASSERT(LOADADDR(.data) + SIZEOF(.data) <= 0x0800F800,
+         "Firmware overlaps the saved-maze flash page")
 
   /* Uninitialized data section into "RAM" Ram type memory */
   . = ALIGN(4);

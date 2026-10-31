@@ -27,6 +27,7 @@ void SearchExploreSlalom(void);
 
 void SearchB(void);
 void SearchSlalom(void);
+void SearchSlalomSlowEntry(void);
 
 void SearchC(void);
 

@@ -7,19 +7,30 @@
 
 #include "drive.h"
 #include "motor.h"
+#include "run_log.h"
 #include "tim.h"
 #include <math.h>
 
 DriveData drive = { 0 };
+static volatile bool half_section_accelerating;
+static volatile float wall_following_gain = WALL_FOLLOW_KP_DEG_S_PER_MM;
+
+void DriveSetWallFollowingGain(float gain) {
+    wall_following_gain = gain;
+}
 
 // Positive omega turns left. Use independent side references: their measured
 // distances do not necessarily share a robot-centre origin.
 static float WallFollowingOmega(float speed_mm_s) {
     SensorDistance d[SENSOR_COUNT];
     SensorReadDistances(d);
-    bool left = d[SENSOR_L].status == SENSOR_DISTANCE_OK &&
+    // Above-range raw is a strong return, not a missing wall. Retain the
+    // conservative near bound for bounded steering; it is not a measurement.
+    bool left = (d[SENSOR_L].status == SENSOR_DISTANCE_OK ||
+            d[SENSOR_L].status == SENSOR_DISTANCE_ABOVE_RAW_RANGE) &&
             d[SENSOR_L].mm <= WALL_FOLLOW_MAX_MM;
-    bool right = d[SENSOR_R].status == SENSOR_DISTANCE_OK &&
+    bool right = (d[SENSOR_R].status == SENSOR_DISTANCE_OK ||
+            d[SENSOR_R].status == SENSOR_DISTANCE_ABOVE_RAW_RANGE) &&
             d[SENSOR_R].mm <= WALL_FOLLOW_MAX_MM;
     float error_mm = 0.0f;
     if (left) error_mm += d[SENSOR_L].mm - WALL_TARGET_L_MM;
@@ -33,7 +44,7 @@ static float WallFollowingOmega(float speed_mm_s) {
     float limit = fmaxf(0.0f, speed_mm_s - WALL_FOLLOW_MIN_WHEEL_MM_S) *
             360.0f / (TREAD_MM * PI);
     limit = fminf(limit, WALL_FOLLOW_MAX_DEG_S);
-    return fmaxf(-limit, fminf(limit, error_mm * WALL_FOLLOW_KP_DEG_S_PER_MM));
+    return fmaxf(-limit, fminf(limit, error_mm * wall_following_gain));
 }
 
 // Only this controller owns the motor commands while mode 4 is moving.
@@ -77,7 +88,7 @@ static bool SlalomWait(uint32_t timeout_ms) {
 bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall) {
     if (!isfinite(distance_mm) || distance_mm <= 0.0f ||
             !isfinite(end_speed) || end_speed < 0.0f ||
-            end_speed > fmaxf(EXPLORE_SLALOM_KNOWN_STRAIGHT_SPEED_MM_S, fmaxf(SECOND_RUN_STRAIGHT_SPEED_MM_S, fmaxf(SLALOM_SPEED_MM_S, fmaxf(EXPLORE_SLALOM_SPEED_MM_S, EXPLORE_KNOWN_STRAIGHT_SPEED_MM_S)))) ||
+            end_speed > fmaxf(MODE8_STRAIGHT_SPEED_MM_S, fmaxf(EXPLORE_SLALOM_KNOWN_STRAIGHT_SPEED_MM_S, fmaxf(SECOND_RUN_STRAIGHT_SPEED_MM_S, fmaxf(SLALOM_SPEED_MM_S, fmaxf(EXPLORE_SLALOM_SPEED_MM_S, EXPLORE_KNOWN_STRAIGHT_SPEED_MM_S))))) ||
             (end_speed > 0.0f && end_speed < SLALOM_MIN_SPEED_MM_S)) {
         DriveSlalomStop();
         return false;
@@ -128,14 +139,32 @@ static bool SlalomTurn(bool right, float entry, float exit, float gain,
     slalom.turning = true;
     slalom.follow_wall = false;
     slalom.busy = true;
+    RunLogSlalomBegin();
     __set_PRIMASK(irq);
-    if (!SlalomWait(2U * ramp_ms + hold_ms + 2000U)) return false;
+    bool turn_ok = SlalomWait(2U * ramp_ms + hold_ms + 2000U);
+    RunLogSlalomEnd();
+    if (!turn_ok) return false;
     return DriveSlalomStraight(exit, speed, false);
 }
 
 bool DriveSlalom90(bool right) {
     return SlalomTurn(right,
             right ? SLALOM_R_ENTRY_MM : SLALOM_L_ENTRY_MM,
+            right ? SLALOM_R_EXIT_MM : SLALOM_L_EXIT_MM,
+            right ? SLALOM_R_ANGLE_GAIN : SLALOM_L_ANGLE_GAIN,
+            SLALOM_SPEED_MM_S, SLALOM_TURN_ANGLE_DEG, SLALOM_RAMP_MS, SLALOM_HOLD_MS);
+}
+
+bool DriveSlalom90SlowEntry(bool right) {
+    float entry = right ? SLALOM_R_ENTRY_MM : SLALOM_L_ENTRY_MM;
+    float brake = MODE8_PRETURN_BRAKE_MM;
+    if (!isfinite(brake) || brake <= 0.0f || brake >= entry ||
+            MODE8_PRETURN_SPEED_MM_S > SLALOM_SPEED_MM_S) {
+        DriveSlalomStop();
+        return false;
+    }
+    if (!DriveSlalomStraight(brake, MODE8_PRETURN_SPEED_MM_S, false)) return false;
+    return SlalomTurn(right, entry - brake,
             right ? SLALOM_R_EXIT_MM : SLALOM_L_EXIT_MM,
             right ? SLALOM_R_ANGLE_GAIN : SLALOM_L_ANGLE_GAIN,
             SLALOM_SPEED_MM_S, SLALOM_TURN_ANGLE_DEG, SLALOM_RAMP_MS, SLALOM_HOLD_MS);
@@ -206,6 +235,12 @@ void DriveUpdate(void) {
     drive.angle_speed_deg_s = (motor.speed_mm_s_r - motor.speed_mm_s_l) / TREAD_MM * (180.0f / PI);
     drive.angle_accel_deg_s2 = (motor.acc_mm_s2_r - motor.acc_mm_s2_l) / TREAD_MM * (180.0f / PI);
 
+    // Cap launch body speed before wall steering, keeping its differential.
+    if (half_section_accelerating && drive.speed_mm_s >= DEFAULT_SPEED) {
+        DriveSetSpeed(DEFAULT_SPEED);
+        DriveSetAccel(0.0f);
+    }
+
     if (drive.wall_following) {
         DriveSetAngleSpeed(WallFollowingOmega(drive.speed_mm_s));
     }
@@ -246,14 +281,23 @@ void DriveSetAngleAccel(float angle_accel) {
  * 戻り値：なし
 */
 void DriveHalfSectionAccel(void) {
+    uint32_t irq = __get_PRIMASK();
+    __disable_irq();
+    half_section_accelerating = true;
     drive.wall_following = true;
     DriveSetSpeed(0.f);
     DriveSetAccel(DEFAULT_ACCEL);
     MotorStart();
-    while((motor.distance_mm_l < HALF_CELL_MM) || (motor.distance_mm_r < HALF_CELL_MM)) {
+    __set_PRIMASK(irq);
+    // Pulse quantisation must not extend the speed ramp past DEFAULT_SPEED.
+    while (DriveSlalomDistance() < HALF_CELL_MM) {
     }
-    DriveSetSpeed(DEFAULT_SPEED);
+    __disable_irq();
     MotorStop();
+    half_section_accelerating = false;
+    DriveSetAccel(0.0f);
+    DriveSetSpeed(DEFAULT_SPEED);
+    __set_PRIMASK(irq);
 }
 
 /*
@@ -262,12 +306,12 @@ void DriveHalfSectionAccel(void) {
  * 引数：なし
  * 戻り値：なし
 */
-static void DriveBrakeDistance(float distance_mm) {
-    drive.wall_following = true;
+static void DriveBrakeDistance(float distance_mm, bool follow_wall) {
+    drive.wall_following = follow_wall;
     DriveSetSpeed(DEFAULT_SPEED);
     DriveSetAccel(-(DEFAULT_SPEED * DEFAULT_SPEED) / (2.0f * distance_mm));
     MotorStart();
-    while((motor.distance_mm_l < distance_mm) || (motor.distance_mm_r < distance_mm)) {
+    while (DriveSlalomDistance() < distance_mm) {
     }
     DriveSetSpeed(0.f);
     DriveSetAccel(0.f);
@@ -275,7 +319,7 @@ static void DriveBrakeDistance(float distance_mm) {
 }
 
 void DriveHalfSectionBreak(void) {
-    DriveBrakeDistance(HALF_CELL_MM);
+    DriveBrakeDistance(HALF_CELL_MM, true);
 }
 
 void DriveOneSection(void) {
@@ -283,7 +327,7 @@ void DriveOneSection(void) {
     DriveSetSpeed(DEFAULT_SPEED);
     DriveSetAccel(0.f);
     MotorStart();
-    while((motor.distance_mm_l < FULL_CELL_MM) || (motor.distance_mm_r < FULL_CELL_MM)) {
+    while (DriveSlalomDistance() < FULL_CELL_MM) {
     }
     MotorStop();
 }
@@ -298,7 +342,7 @@ void DriveKnownStraight(unsigned cells, float peak_speed) {
     DriveSetAccel(0.0f);
     MotorStart();
     uint32_t last_update = HAL_GetTick() - 1U;
-    while ((motor.distance_mm_l < total) || (motor.distance_mm_r < total)) {
+    while (DriveSlalomDistance() < total) {
         uint32_t tick = HAL_GetTick();
         if (tick == last_update) continue;
         last_update = tick;
@@ -392,14 +436,14 @@ void DriveRotateL180(void) {
 
 void DriveTurnR90(void) {
     drive.wall_following = false; // 壁追従を無効化
-    DriveBrakeDistance(HALF_CELL_MM + TURN_ENTRY_EXTRA_MM);
+    DriveBrakeDistance(HALF_CELL_MM + TURN_ENTRY_EXTRA_MM, false);
     DriveRotateR90();
     DriveHalfSectionAccel();
 }
 
 void DriveTurnL90(void) {
     drive.wall_following = false; // 壁追従を無効化
-    DriveBrakeDistance(HALF_CELL_MM + TURN_ENTRY_EXTRA_MM);
+    DriveBrakeDistance(HALF_CELL_MM + TURN_ENTRY_EXTRA_MM, false);
     DriveRotateL90();
     DriveHalfSectionAccel();
 }

@@ -53,7 +53,9 @@ void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
+  /* Control timers retain priority 0; UART never preempts them. */
+  HAL_NVIC_SetPriority(USART2_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
   /* USER CODE END USART2_Init 2 */
 
 }
@@ -106,7 +108,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     HAL_GPIO_DeInit(GPIOA, VCP_TX_Pin|VCP_RX_Pin);
 
   /* USER CODE BEGIN USART2_MspDeInit 1 */
-
+    HAL_NVIC_DisableIRQ(USART2_IRQn);
   /* USER CODE END USART2_MspDeInit 1 */
   }
 }

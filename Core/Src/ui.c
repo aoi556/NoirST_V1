@@ -1,4 +1,4 @@
-﻿/*
+/*
  * ui.c
  *
  *  Created on: 2026/06/22
@@ -11,6 +11,7 @@
 #include "global.h"
 #include "ui.h"
 #include "usart.h"
+#include "log_stream.h"
  //+++++++++++++++++++++++++++++++++++++++++++++++
  // led_write_1
  // LEDを点灯させる
@@ -88,7 +89,7 @@ int select_mode(int mode) {
             while (HAL_GPIO_ReadPin(SW1_GPIO_Port, SW1_Pin) == GPIO_PIN_RESET)
                 ;
             mode++;
-            if (mode > 7) {
+            if (mode > 8) {
                 mode = 0;
             }
             printf("Mode : %d\n", mode);
@@ -99,7 +100,7 @@ int select_mode(int mode) {
                 ;
             mode--;
             if (mode < 0) {
-                mode = 7;
+                mode = 8;
             }
             printf("Mode : %d\n", mode);
         }
@@ -121,6 +122,7 @@ int select_mode(int mode) {
 // printf を使うために必要
 //+++++++++++++++++++++++++++++++++++++++++++++++
 int __io_putchar(int ch) {
+	if (LogStreamSuppressDebug()) return ch;
 	uint8_t c = (uint8_t)ch;
 
 	if (c == '\n') {

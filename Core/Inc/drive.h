@@ -43,10 +43,12 @@ void DriveSetAngleSpeed(float angle_speed);
 void DriveSetAngleAccel(float angle_accel);
 
 void DriveUpdate(void);
+void DriveSetWallFollowingGain(float gain);
 
 // Continuous mode-4 primitives. Start automatically; end_speed == 0 stops.
 bool DriveSlalomStraight(float distance_mm, float end_speed, bool follow_wall);
 bool DriveSlalom90(bool right);
+bool DriveSlalom90SlowEntry(bool right);
 bool DriveExploreSlalom90(bool right, float planning_distance_mm);
 float DriveSlalomDistance(void);
 void DriveSlalomStop(void);

@@ -8,6 +8,18 @@
 #ifndef INC_PARAMS_H_
 #define INC_PARAMS_H_
 
+// RAM logging; periods are multiples of the unchanged 1 ms TIM6 tick.
+#define LOG_EXPLORE_PERIOD_MS 10U
+#define LOG_SLALOM_PERIOD_MS 1U
+#define LOG_EXPLORE_CAPACITY 128U
+#define LOG_SLALOM_CAPACITY 256U // 16 bytes each, maximum 256 in 4 KB CCM.
+#define LOG_EVENT_CAPACITY 64U
+#define LOG_SLALOM_TURN_INDEX 0U // Capture this zero-based turn; 0 = first turn.
+#define LOG_LIVE_ENABLED 1U
+#define LOG_LIVE_EXPLORE_MS 10U
+#define LOG_LIVE_SLALOM_MS 5U
+#define LOG_LIVE_QUEUE 8U // Drop newest when this small TX backlog is full.
+
  /*============================================================
      各種定数（パラメータ）設定
  ============================================================*/
@@ -61,6 +73,7 @@
 #define WALL_FOLLOW_MAX_MM 70.0f // Ignore distant/opening-edge readings for steering.
 #define WALL_FOLLOW_DEADBAND_MM 1.0f
 #define WALL_FOLLOW_KP_DEG_S_PER_MM 2.0f
+#define MODE4_WALL_FOLLOW_KP_DEG_S_PER_MM 2.0f
 #define WALL_FOLLOW_MAX_DEG_S 60.0f
 #define WALL_FOLLOW_MIN_WHEEL_MM_S 30.0f
 
@@ -87,15 +100,18 @@
 #define SETPOS_BACK_MM (100.f) // 後ろ壁に当てるために下がる距離[mm]
 #define SETPOS_SET_MM (40.f) // 後ろ壁から中央までの距離[mm]
 
-#define TREAD_MM (80.f) // トレッド幅[mm]（左右の車輪の中心間距離）
+#define TREAD_MM (81.7f) // トレッド幅[mm]（左右の車輪の中心間距離）
 
 #define DEFAULT_ACCEL ((DEFAULT_SPEED * DEFAULT_SPEED - 0*0) / (2.f * HALF_CELL_MM)) // デフォルト加速度[mm/s^2]
-#define DEFAULT_SPEED 525.0f // デフォルト速度[mm/s]
+#define DEFAULT_SPEED 500.0f // デフォルト速度[mm/s]
 #define DEFAULT_ROTATE_SPEED 225.0f // デフォルト回転速度[deg/s]
 
 // モード4専用。スラローム Initial values require on-robot tuning.
-#define SECOND_RUN_STRAIGHT_SPEED_MM_S 800.0f // Modes 3/4; turns retain their calibrated speeds.
+#define SECOND_RUN_STRAIGHT_SPEED_MM_S 600.0f // Modes 3/4; turns retain their calibrated speeds.
+#define MODE8_STRAIGHT_SPEED_MM_S 600.0f // Independent mode-8 straight speed.
 #define SLALOM_SPEED_MM_S 500.0f
+#define MODE8_PRETURN_SPEED_MM_S 500.0f
+#define MODE8_PRETURN_BRAKE_MM 5.0f // Within the existing turn entry; remainder reaccelerates.
 #define SLALOM_MIN_SPEED_MM_S 30.0f // Keep step periods within the 16-bit timer range.
 #define SLALOM_TURN_ANGLE_DEG 90.0f // 旋回角度。加速・一定速・減速でそれぞれ1/3ずつ回る。
 #define SLALOM_HOLD_MS 50U // 一定角速度の時間[ms]。加速・減速は各2倍。

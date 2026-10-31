@@ -22,6 +22,8 @@
 #include "stm32f3xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "usart.h"
+#include "log_stream.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -172,7 +174,7 @@ void DebugMon_Handler(void)
 void PendSV_Handler(void)
 {
   /* USER CODE BEGIN PendSV_IRQn 0 */
-
+  LogStreamWork();
   /* USER CODE END PendSV_IRQn 0 */
   /* USER CODE BEGIN PendSV_IRQn 1 */
 
@@ -242,6 +244,8 @@ void TIM6_DAC1_IRQHandler(void)
   /* USER CODE END TIM6_DAC1_IRQn 1 */
 }
 
+void USART2_IRQHandler(void) {
+  HAL_UART_IRQHandler(&huart2);
+}
 /* USER CODE BEGIN 1 */
-
 /* USER CODE END 1 */

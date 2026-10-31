@@ -30,6 +30,7 @@
 #include "drive.h"
 #include "driveTest.h"
 #include "search.h"
+#include "run_log.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -117,6 +118,8 @@ int main(void)
   {
 	  //mode選択
 	  mode = select_mode(mode);
+      DriveSetWallFollowingGain((mode == 4 || mode == 8) ? MODE4_WALL_FOLLOW_KP_DEG_S_PER_MM
+              : WALL_FOLLOW_KP_DEG_S_PER_MM);
 	  //mode選択に応じた動作
 	  switch (mode) {
 	  case 0:
@@ -126,6 +129,7 @@ int main(void)
       MotorEnable();
       SearchInit();
       DriveSetStartPosition();
+      RunLogStart((uint8_t)mode);
       SearchExploreSlalom();
       MotorDisable();
 		  break;
@@ -136,6 +140,7 @@ int main(void)
       MotorEnable();
       SearchInit();
       DriveSetStartPosition();
+      RunLogStart((uint8_t)mode);
       SearchB();
       MotorDisable();
 		  break;
@@ -146,6 +151,7 @@ int main(void)
 		  MotorEnable();
 		  SearchInit();
 		  DriveSetStartPosition();
+		  RunLogStart((uint8_t)mode);
 		  SearchC();
 		  MotorDisable();
 		  break;
@@ -156,6 +162,7 @@ int main(void)
 		  MotorEnable();
 		  SearchInit();
 		  mouse.second = true;
+		  RunLogStart((uint8_t)mode);
 		  SearchB();
 		  MotorDisable();
 		  break;
@@ -166,9 +173,19 @@ int main(void)
 		  MotorEnable();
 		  SearchInit();
 		  mouse.second = true;
+		  RunLogStart((uint8_t)mode);
 		  SearchSlalom();
 		  MotorDisable();
 		  break;
+      case 8:
+          printf("Mode 8: saved-map slalom with preturn speed control\n");
+          MotorInit();
+          MotorEnable();
+          SearchInit();
+          mouse.second = true;
+          SearchSlalomSlowEntry();
+          MotorDisable();
+          break;
 	  case 5:
 		  // モード5の処理
 		  printf("Mode 5 selected\n");
@@ -194,6 +211,7 @@ int main(void)
 		  printf("Default mode selected\n");
 		  break;
 	  }
+    if ((mode >= 0 && mode <= 4) || mode == 8) RunLogStopAndDump();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

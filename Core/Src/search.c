@@ -10,6 +10,7 @@
 //#include "Core/Inc/search.h"
 #include "drive.h"
 #include "motor.h"
+#include "run_log.h"
 #include <math.h>
 
 MouseData mouse = { 0 }; //マウス情報を格納する構造体
@@ -78,6 +79,7 @@ void SearchExploreSlalom(void) {
     GetSectionInfo();
     mouse.section.north = false;
     MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section);
+    RunLogEvent(LOG_WALLS);
     if (!DriveSlalomStraight(HALF_CELL_MM, EXPLORE_SLALOM_SPEED_MM_S, true)) return;
     AdvancePosition();
     bool reached_goal = false;
@@ -86,6 +88,7 @@ void SearchExploreSlalom(void) {
         bool already_known = maze.map[mouse.x][mouse.y].visited;
         GetSectionInfo();
         MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section);
+        RunLogEvent(LOG_WALLS);
         if (mouse.x == maze.goal_x && mouse.y == maze.goal_y) reached_goal = true;
         uint16_t known, possible;
         ExploreResult result = MazePlanExplore(&maze, mouse.x, mouse.y,
@@ -96,6 +99,7 @@ void SearchExploreSlalom(void) {
             if (!DriveSlalomStraight(remaining, 0.0f, true)) return;
             DriveRotateR180();
             mouse.dir = (mouse.dir + 2) % 4;
+            RunLogEvent(LOG_DIRECTION);
             MazeWriteFlsh(&maze);
             printf("Mode 0: shortest route confirmed, returned to start, map saved\n");
             return;
@@ -129,11 +133,11 @@ void SearchExploreSlalom(void) {
             break;
         case KTurnL90:
             ok = DriveExploreSlalom90(false, travelled);
-            if (ok) mouse.dir = (mouse.dir + 3) % 4;
+            if (ok) { mouse.dir = (mouse.dir + 3) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         case KTurnR90:
             ok = DriveExploreSlalom90(true, travelled);
-            if (ok) mouse.dir = (mouse.dir + 1) % 4;
+            if (ok) { mouse.dir = (mouse.dir + 1) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         case KTurn180:
             ok = DriveSlalomStraight(HALF_CELL_MM - travelled, 0.0f, true);
@@ -154,7 +158,7 @@ void SearchExploreSlalom(void) {
                 }
                 ok = DriveSlalomStraight(HALF_CELL_MM, EXPLORE_SLALOM_SPEED_MM_S, true);
             }
-            if (ok) mouse.dir = (mouse.dir + 2) % 4;
+            if (ok) { mouse.dir = (mouse.dir + 2) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         default:
             break;
@@ -194,12 +198,14 @@ void SearchB(void) {
 	GetSectionInfo(); //スタート位置の壁情報を取得
 	mouse.section.north = false; //スタート位置の北側は壁がない
 	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //スタート位置の壁情報を迷路マップに書き込む
+	RunLogEvent(LOG_WALLS);
 	//====前に壁が無い想定で問答無用で前進====
 	/*半区画前進関数*/
 	DriveHalfSectionAccel(); //半区画加速走行
 	AdvancePosition(); //マウスの座標を進行方向に1区画進める
 	GetSectionInfo(); //進んだ先の壁情報を取得
 	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+	RunLogEvent(LOG_WALLS);
 	//====探索走行====
 	while (mouse.x != maze.goal_x || mouse.y != maze.goal_y) {
 		// 現在マスで観測した壁を使い、距離マップと経路を毎回更新する。
@@ -229,11 +235,13 @@ void SearchB(void) {
 		case KTurnL90:
 			DriveTurnL90(); //左90度回転関数
 			mouse.dir = (mouse.dir + 3) % 4; //左90度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 			//----右90度回転----
 		case KTurnR90:
 			DriveTurnR90(); //右90度回転関数
 			mouse.dir = (mouse.dir + 1) % 4; //右90度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 			//----180度回転----
 		case KTurn180:
@@ -267,6 +275,7 @@ void SearchB(void) {
 			/*半区画加速走行をここに書く*/
 			DriveHalfSectionAccel();
 			mouse.dir = (mouse.dir + 2) % 4; //180度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 		default:
 			break;
@@ -274,6 +283,7 @@ void SearchB(void) {
 		AdvancePosition(); //マウスの座標を進行方向に1区画進める
 		GetSectionInfo(); //進んだ先の壁情報を取得
 		MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+		RunLogEvent(LOG_WALLS);
 	}
 	////====ゴール到達====
 	//ゴール到達時の処理
@@ -281,6 +291,7 @@ void SearchB(void) {
 	/*180度旋回をする*/
 	DriveRotateR180();
 	mouse.dir = (mouse.dir + 2) % 4; //180度回転
+	RunLogEvent(LOG_DIRECTION);
 	if (!mouse.second) {
 		//フラッシュメモリに迷路情報を書き込む
 		MazeWriteFlsh(&maze);
@@ -289,7 +300,9 @@ void SearchB(void) {
 
 // Mode 4 uses a fixed saved-map route: no flash writes or map rebuilding
 // between motions. Every action starts/ends at a cell entrance/exit.
-void SearchSlalom(void) {
+static void SearchSlalomRun(bool slow_entry) {
+    const float straight_speed = slow_entry ? MODE8_STRAIGHT_SPEED_MM_S
+            : SECOND_RUN_STRAIGHT_SPEED_MM_S;
     MazeReadFlsh(&maze);
     if (maze.goal_x >= MAZE_SIZE || maze.goal_y >= MAZE_SIZE) {
         printf("Slalom: invalid saved goal\n");
@@ -310,6 +323,7 @@ void SearchSlalom(void) {
     }
     DriveSlalomStop();
     DriveSetStartPosition();
+    RunLogStart(slow_entry ? 8 : 4);
     if (!DriveSlalomStraight(HALF_CELL_MM, SLALOM_SPEED_MM_S, true)) return;
     AdvancePosition();
     for (uint16_t i = 0; i < maze.r_cnt; ++i) {
@@ -319,10 +333,10 @@ void SearchSlalom(void) {
             {
                 uint16_t cells = 1;
                 while (i + cells < maze.r_cnt && maze.route[i + cells] == KForward) cells++;
-                ok = DriveSlalomStraight(HALF_CELL_MM, SECOND_RUN_STRAIGHT_SPEED_MM_S, true);
+                ok = DriveSlalomStraight(HALF_CELL_MM, straight_speed, true);
                 float cruise = FULL_CELL_MM * (cells - 1U);
                 if (ok && cruise > 0.0f)
-                    ok = DriveSlalomStraight(cruise, SECOND_RUN_STRAIGHT_SPEED_MM_S, true);
+                    ok = DriveSlalomStraight(cruise, straight_speed, true);
                 if (ok) ok = DriveSlalomStraight(HALF_CELL_MM, SLALOM_SPEED_MM_S, true);
                 if (ok) {
                     for (uint16_t j = 1; j < cells; j++) AdvancePosition();
@@ -331,12 +345,12 @@ void SearchSlalom(void) {
             }
             break;
         case KTurnL90:
-            ok = DriveSlalom90(false);
-            if (ok) mouse.dir = (mouse.dir + 3) % 4;
+            ok = slow_entry ? DriveSlalom90SlowEntry(false) : DriveSlalom90(false);
+            if (ok) { mouse.dir = (mouse.dir + 3) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         case KTurnR90:
-            ok = DriveSlalom90(true);
-            if (ok) mouse.dir = (mouse.dir + 1) % 4;
+            ok = slow_entry ? DriveSlalom90SlowEntry(true) : DriveSlalom90(true);
+            if (ok) { mouse.dir = (mouse.dir + 1) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         case KTurn180:
             // Retain the calibrated stationary U-turn, at the cell centre.
@@ -345,7 +359,7 @@ void SearchSlalom(void) {
                 DriveRotateR180();
                 ok = DriveSlalomStraight(HALF_CELL_MM, SLALOM_SPEED_MM_S, true);
             }
-            if (ok) mouse.dir = (mouse.dir + 2) % 4;
+            if (ok) { mouse.dir = (mouse.dir + 2) % 4; RunLogEvent(LOG_DIRECTION); }
             break;
         default:
             break;
@@ -360,7 +374,16 @@ void SearchSlalom(void) {
     if (!DriveSlalomStraight(HALF_CELL_MM, 0.0f, true)) return;
     DriveRotateR180();
     mouse.dir = (mouse.dir + 2) % 4;
+    RunLogEvent(LOG_DIRECTION);
     printf("Slalom complete: (%d, %d)\n", mouse.x, mouse.y);
+}
+
+void SearchSlalom(void) {
+    SearchSlalomRun(false);
+}
+
+void SearchSlalomSlowEntry(void) {
+    SearchSlalomRun(true);
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++
@@ -375,12 +398,14 @@ void SearchC(void) {
 	GetSectionInfo(); //スタート位置の壁情報を取得
 	mouse.section.north = false; //スタート位置の北側は壁がない
 	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //スタート位置の壁情報を迷路マップに書き込む
+	RunLogEvent(LOG_WALLS);
 	//====前に壁が無い想定で問答無用で前進====
 	/*半区画前進関数*/
 	DriveHalfSectionAccel(); //半区画加速走行
 	AdvancePosition(); //マウスの座標を進行方向に1区画進める
 	GetSectionInfo(); //進んだ先の壁情報を取得
 	MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+	RunLogEvent(LOG_WALLS);
 	//====探索走行====
     bool reached_goal = false;
     bool certified = false;
@@ -408,7 +433,8 @@ void SearchC(void) {
 		case KForward:
             {
                 unsigned cells = KnownStraightCells(reached_goal, already_known);
-                if (cells) {
+                // Accelerate only when at least two known straight cells remain.
+                if (cells >= 2U) {
                     DriveKnownStraight(cells, EXPLORE_KNOWN_STRAIGHT_SPEED_MM_S);
                     for (unsigned i = 1; i < cells; i++) AdvancePosition();
                 } else DriveOneSection();
@@ -418,11 +444,13 @@ void SearchC(void) {
 		case KTurnL90:
 			DriveTurnL90(); //左90度回転関数
 			mouse.dir = (mouse.dir + 3) % 4; //左90度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 			//----右90度回転----
 		case KTurnR90:
 			DriveTurnR90(); //右90度回転関数
 			mouse.dir = (mouse.dir + 1) % 4; //右90度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 			//----180度回転----
 		case KTurn180:
@@ -456,6 +484,7 @@ void SearchC(void) {
 			/*半区画加速走行をここに書く*/
 			DriveHalfSectionAccel();
 			mouse.dir = (mouse.dir + 2) % 4; //180度回転
+			RunLogEvent(LOG_DIRECTION);
 			break;
 		default:
 			break;
@@ -464,11 +493,13 @@ void SearchC(void) {
         already_known = maze.map[mouse.x][mouse.y].visited;
 		GetSectionInfo(); //進んだ先の壁情報を取得
 		MazeWriteWallMap(&maze, mouse.x, mouse.y, mouse.section); //進んだ先の壁情報を迷路マップに書き込む
+		RunLogEvent(LOG_WALLS);
 	}
     // Finish the last half-cell into the start cell, then turn around.
     DriveHalfSectionBreak();
     DriveRotateR180();
     mouse.dir = (mouse.dir + 2) % 4;
+    RunLogEvent(LOG_DIRECTION);
     MazeWriteFlsh(&maze);
     printf("SearchC complete: shortest route confirmed, returned to start.\n");
 }
@@ -537,6 +568,7 @@ void AdvancePosition(void) {
 	default:
 		break;
 	}
+    RunLogEvent(LOG_POSITION);
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++
